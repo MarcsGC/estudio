@@ -6,7 +6,6 @@ Web para estudiar organizada por **curso → asignatura → tema**.
 - **Software y Estándares para la Web (SEW)**: 16 PDFs de teoría y seminarios, y 356 preguntas en 15 temas.
   - 50 preguntas de los controles del campus (Teoría XML, Usabilidad y Adaptabilidad), con las respuestas oficiales.
   - 306 preguntas creadas por Claude a partir de los apuntes, con explicación.
-- **Software para Dispositivos Móviles**: presentación del proyecto LifeQuest.
 
 **Funciones**
 - Apuntes en PDF con visor integrado, agrupados por tema.
@@ -78,5 +77,4 @@ js/app.js                  lógica (no hace falta tocarlo)
 data/cursos.js             cursos, asignaturas, temas y PDFs
 data/preguntas/3/sew.js    preguntas de SEW
 pdfs/3/sew/                apuntes de SEW
-pdfs/3/sdm/                presentación del proyecto de móviles
 ```

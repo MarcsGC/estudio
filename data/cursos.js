@@ -63,16 +63,6 @@ window.CURSOS = [
           { titulo: "Seminario 3: Adaptabilidad en la Web", archivo: "pdfs/3/sew/s3-adaptabilidad.pdf", tema: "S3 · Adaptabilidad", nota: "64 diapositivas" },
           { titulo: "Seminario 4: Accesibilidad en la Web", archivo: "pdfs/3/sew/s4-accesibilidad.pdf", tema: "S4 · Accesibilidad", nota: "142 diapositivas" }
         ]
-      },
-      {
-        id: "sdm",
-        nombre: "Software para Dispositivos Móviles",
-        descripcion: "Proyecto LifeQuest (versión Kotlin).",
-        color: "#7a5a2f",
-        temas: ["Proyecto"],
-        pdfs: [
-          { titulo: "Presentación del proyecto LifeQuest", archivo: "pdfs/3/sdm/presentacion-lifequest-kotlin.pdf", tema: "Proyecto", nota: "Objetivos y primer sprint" }
-        ]
       }
 
       /* Plantilla para otra asignatura (borra la barra-asterisco de esta
