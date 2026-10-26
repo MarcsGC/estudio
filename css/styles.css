@@ -220,13 +220,74 @@ a.mini:hover { border-color: var(--acento); }
 .mini-off { opacity: .4; }
 
 /* ===== Visor PDF ===== */
-.visor-barra {
-  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
-  margin-bottom: 14px;
+body.modo-visor { height: 100vh; height: 100dvh; overflow: hidden; }
+body.modo-visor .pie, body.modo-visor .migas { display: none; }
+body.modo-visor .topbar { padding-top: 8px; padding-bottom: 8px; max-width: none; }
+body.modo-visor .contenedor {
+  max-width: none; padding: 0 16px 16px; flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
 }
-.visor {
-  width: 100%; height: calc(100vh - 220px); min-height: 480px;
-  border: 1px solid var(--borde); border-radius: var(--radio); background: var(--superficie-2);
+.visor-wrap {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--borde); border-radius: var(--radio); overflow: hidden;
+  background: var(--superficie-2);
+}
+.visor-wrap:fullscreen { border: 0; border-radius: 0; }
+.visor-wrap:-webkit-full-screen { border: 0; border-radius: 0; width: 100%; height: 100%; }
+.pv-barra {
+  display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;
+  padding: 6px 8px; background: var(--superficie); border-bottom: 1px solid var(--borde);
+}
+.pv-izq { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.pv-titulo { min-width: 0; line-height: 1.25; }
+.pv-titulo small { display: block; font-size: .72rem; color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-titulo strong { display: block; font-weight: 600; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-grupo { display: flex; align-items: center; gap: 2px; }
+.pv-btn {
+  flex: none; min-width: 36px; height: 36px; padding: 0; border-radius: 8px;
+  display: inline-grid; place-items: center; cursor: pointer;
+  border: 0; background: none; color: var(--texto); text-decoration: none;
+}
+.pv-btn:hover:not(:disabled) { background: var(--superficie-2); }
+.pv-btn:disabled { opacity: .3; cursor: default; }
+.pv-btn svg { width: 19px; height: 19px; }
+.pv-zoom { padding: 0 10px; font-size: .82rem; font-weight: 600; font-variant-numeric: tabular-nums; border: 1px solid var(--borde); height: 30px; }
+.pv-pag input {
+  width: 3.4em; height: 30px; text-align: center; font: inherit; font-size: .9rem;
+  border: 1px solid var(--borde); border-radius: 6px; background: var(--fondo); color: var(--texto);
+  -moz-appearance: textfield;
+}
+.pv-pag input::-webkit-inner-spin-button, .pv-pag input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.pv-pag span { font-size: .9rem; color: var(--texto-suave); margin: 0 4px 0 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pv-paginas { flex: 1; min-height: 0; overflow: auto; position: relative; outline: none; overscroll-behavior: contain; }
+.pv-lista {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 14px; min-width: min-content; min-height: 100%;
+}
+.pv-pagina {
+  flex: none; position: relative; background: #fff; border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18), 0 6px 20px rgba(0, 0, 0, .08);
+}
+.pv-pagina canvas { display: block; width: 100%; height: 100%; border-radius: 2px; }
+.pv-pagina:not(.lista)::before {
+  content: attr(data-n); position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: 1.6rem; color: #c9c4b8; font-family: var(--sans);
+}
+.pv-estado { margin: auto; text-align: center; color: var(--texto-suave); padding: 40px 16px; }
+.pv-estado p + p { margin-top: 6px; }
+.pv-iframe { width: 100%; flex: 1; min-height: 70vh; border: 0; background: var(--superficie); }
+.pv-fin { text-align: center; padding: 18px 8px 26px; color: var(--texto-suave); }
+.pv-fin strong { color: var(--texto); }
+.pv-fin .acciones { justify-content: center; margin-top: 12px; }
+@media (max-width: 640px) {
+  body.modo-visor .contenedor { padding: 0 6px 6px; }
+  .pv-izq { flex-basis: 100%; }
+  .pv-barra { justify-content: space-between; flex-wrap: wrap; }
+  .pv-solo-grande { display: none; }
+  .pv-btn { min-width: 34px; height: 34px; }
+  .pv-pag span { margin: 0 2px 0 4px; }
+  .pv-lista { padding: 8px; gap: 8px; }
+  .pv-fin .btn { font-size: .88rem; }
 }
 
 /* ===== Botones y formularios ===== */

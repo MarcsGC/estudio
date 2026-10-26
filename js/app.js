@@ -145,6 +145,7 @@
   /* ---------- Router ---------- */
   function router() {
     if (limpiarTeclado) { limpiarTeclado(); limpiarTeclado = null; }
+    document.body.classList.remove("modo-visor");
     var p = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
 
     if (p.length === 0) return vistaInicio();
@@ -353,17 +354,282 @@
       { txt: asig.nombre, href: base },
       { txt: pdf.titulo || "PDF" }
     ]);
+    document.body.classList.add("modo-visor");
     var url = encodeURI(pdf.archivo);
+    var titulo = pdf.titulo || pdf.archivo;
+    var pdfs = asig.pdfs || [];
+    var puedeFull = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+
     pintar(
-      '<div class="visor-barra"><h2>' + esc(pdf.titulo || pdf.archivo) + "</h2>" +
-      '<div class="acciones" style="margin:0">' +
-      '<a class="btn" href="' + base + '">← Volver</a>' +
-      '<a class="btn" href="' + url + '" target="_blank" rel="noopener">Abrir en pestaña nueva</a>' +
-      '<a class="btn primario" href="' + url + '" download>Descargar</a></div></div>' +
-      '<iframe class="visor" src="' + url + '" title="' + esc(pdf.titulo || "PDF") + '"></iframe>' +
-      '<p class="meta" style="margin-top:10px;font-size:.85rem;color:var(--texto-suave)">¿No se ve en el móvil? Usa «Abrir en pestaña nueva».</p>'
+      '<div class="visor-wrap" id="pv-wrap">' +
+        '<div class="pv-barra">' +
+          '<div class="pv-izq">' +
+            '<a class="pv-btn" href="' + base + '" aria-label="Volver a la asignatura" title="Volver">' + ICO.atras + "</a>" +
+            '<div class="pv-titulo"><small>' + esc(pdf.tema || asig.nombre) + "</small><strong>" + esc(titulo) + "</strong></div>" +
+          "</div>" +
+          '<div class="pv-grupo pv-pag">' +
+            '<button class="pv-btn" id="pv-prev" type="button" aria-label="Página anterior" title="Anterior (←)">' + ICO.izq + "</button>" +
+            '<input id="pv-num" type="number" min="1" value="1" aria-label="Página actual"><span id="pv-total">/ …</span>' +
+            '<button class="pv-btn" id="pv-next" type="button" aria-label="Página siguiente" title="Siguiente (→)">' + ICO.der + "</button>" +
+          "</div>" +
+          '<div class="pv-grupo">' +
+            '<button class="pv-btn" id="pv-menos" type="button" aria-label="Alejar" title="Alejar (−)">' + ICO.menos + "</button>" +
+            '<button class="pv-btn pv-zoom" id="pv-zoom" type="button" title="Ajustar a la pantalla (0)">Ajustar</button>' +
+            '<button class="pv-btn" id="pv-mas" type="button" aria-label="Acercar" title="Acercar (+)">' + ICO.mas + "</button>" +
+            (puedeFull ? '<button class="pv-btn pv-solo-grande" id="pv-full" type="button" aria-label="Pantalla completa" title="Pantalla completa (F)">' + ICO.full + "</button>" : "") +
+            '<a class="pv-btn pv-solo-grande" href="' + url + '" download aria-label="Descargar" title="Descargar">' + ICO.bajar + "</a>" +
+            '<a class="pv-btn" href="' + url + '" target="_blank" rel="noopener" aria-label="Abrir en pestaña nueva" title="Abrir en pestaña nueva">' + ICO.fuera + "</a>" +
+          "</div>" +
+        "</div>" +
+        '<div class="pv-paginas" id="pv-paginas" tabindex="0"><div class="pv-lista" id="pv-lista">' +
+          '<div class="pv-estado" id="pv-estado">Cargando PDF…</div>' +
+        "</div></div>" +
+      "</div>"
     );
+
+    var wrap = document.getElementById("pv-wrap");
+    var cont = document.getElementById("pv-paginas");
+    var lista = document.getElementById("pv-lista");
+    var inNum = document.getElementById("pv-num");
+    var btnZoom = document.getElementById("pv-zoom");
+    var clave = "pag:" + pdf.archivo;
+    var doc = null, total = 0, ratios = [], paginas = [], ancho = 0, zoom = 1;
+    var actual = 1, saltando = 0, gen = 0, vivo = true, obs = null, rafScroll = 0, timerResize = 0, tareas = {};
+    var NIVELES = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+
+    function anchoBase() {
+      var pad = window.innerWidth < 640 ? 16 : 28;
+      var w = cont.clientWidth - pad, h = cont.clientHeight - pad;
+      var r = ratios[1] || 0.5625;
+      // Diapositivas horizontales: que se vea la página entera. Verticales: ajustar al ancho.
+      return Math.max(200, Math.floor(r <= 1 ? Math.min(w, h / r) : Math.min(w, 900)));
+    }
+
+    function maquetar(mantener) {
+      var pag = mantener || actual;
+      gen++;
+      Object.keys(tareas).forEach(function (k) { try { tareas[k].cancel(); } catch (e) {} });
+      tareas = {};
+      ancho = Math.round(anchoBase() * zoom);
+      btnZoom.textContent = zoom === 1 ? "Ajustar" : Math.round(zoom * 100) + "%";
+      paginas.forEach(function (el, k) {
+        if (!el) return;
+        el.style.width = ancho + "px";
+        el.style.height = Math.round(ancho * (ratios[k] || ratios[1] || 0.5625)) + "px";
+        vaciar(el);
+      });
+      if (obs) { obs.disconnect(); paginas.forEach(function (el) { if (el) obs.observe(el); }); }
+      irA(pag, true);
+    }
+
+    function vaciar(el) {
+      var c = el.querySelector("canvas");
+      if (c) { c.width = 0; c.height = 0; el.removeChild(c); }
+      el.classList.remove("lista");
+      el.dataset.gen = "";
+      el._tok = null;
+      var k = +el.dataset.n;
+      if (tareas[k]) { try { tareas[k].cancel(); } catch (e) {} delete tareas[k]; }
+    }
+
+    function pintarPagina(k) {
+      var el = paginas[k];
+      if (!el || el.dataset.gen === String(gen)) return;
+      el.dataset.gen = String(gen);
+      var miGen = gen, tok = {};
+      el._tok = tok;
+      doc.getPage(k).then(function (page) {
+        if (!vivo || miGen !== gen || el._tok !== tok) return;
+        var vp1 = page.getViewport({ scale: 1 });
+        var r = vp1.height / vp1.width;
+        if (Math.abs(r - (ratios[k] || 0)) > 0.001) { ratios[k] = r; el.style.height = Math.round(ancho * r) + "px"; }
+        var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        var vp = page.getViewport({ scale: (ancho * dpr) / vp1.width });
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.floor(vp.width);
+        canvas.height = Math.floor(vp.height);
+        var tarea = page.render({ canvasContext: canvas.getContext("2d"), viewport: vp });
+        tareas[k] = tarea;
+        return tarea.promise.then(function () {
+          if (tareas[k] === tarea) delete tareas[k];
+          if (!vivo || miGen !== gen || el._tok !== tok) { canvas.width = 0; canvas.height = 0; return; }
+          var vieja = el.querySelector("canvas");
+          if (vieja) el.removeChild(vieja);
+          el.appendChild(canvas);
+          el.classList.add("lista");
+        });
+      }).catch(function () { if (el._tok === tok) { el.dataset.gen = ""; el._tok = null; } });
+    }
+
+    function paginaVisible() {
+      var y = cont.scrollTop + cont.clientHeight * 0.35;
+      var lo = 1, hi = total, res = 1;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (paginas[mid].offsetTop <= y) { res = mid; lo = mid + 1; } else hi = mid - 1;
+      }
+      return res;
+    }
+
+    function actualizarActual() {
+      rafScroll = 0;
+      if (!total) return;
+      var n = paginaVisible();
+      // Mientras dura un salto programado, la página «actual» es el destino, no la que pasa por pantalla
+      if (Date.now() < saltando && n !== actual) n = actual;
+      else saltando = 0;
+      if (n !== actual) { actual = n; store.set(clave, n); }
+      if (document.activeElement !== inNum) inNum.value = actual;
+      document.getElementById("pv-prev").disabled = actual <= 1;
+      document.getElementById("pv-next").disabled = actual >= total;
+    }
+
+    function irA(n, instantaneo) {
+      if (!total) return;
+      n = Math.max(1, Math.min(total, n | 0));
+      if (Math.abs(n - actual) > 2) instantaneo = true;
+      actual = n;
+      saltando = instantaneo ? 0 : Date.now() + 600;
+      var el = paginas[n];
+      cont.scrollTo({ top: Math.max(0, el.offsetTop - (window.innerWidth < 640 ? 8 : 14)), behavior: instantaneo ? "auto" : "smooth" });
+      inNum.value = n;
+      store.set(clave, n);
+      actualizarActual();
+    }
+
+    function cambiarZoom(dir) {
+      var i = NIVELES.indexOf(zoom);
+      if (dir === 0) zoom = 1;
+      else zoom = NIVELES[Math.max(0, Math.min(NIVELES.length - 1, i + dir))];
+      maquetar(actual);
+    }
+
+    function pantallaCompleta() {
+      var activo = document.fullscreenElement || document.webkitFullscreenElement;
+      if (activo) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap);
+    }
+
+    function onKey(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.target === inNum) return;
+      var k = e.key;
+      if (k === "ArrowRight" || k === "PageDown") { irA(actual + 1); e.preventDefault(); }
+      else if (k === "ArrowLeft" || k === "PageUp") { irA(actual - 1); e.preventDefault(); }
+      else if (k === "Home") { irA(1); e.preventDefault(); }
+      else if (k === "End") { irA(total); e.preventDefault(); }
+      else if (k === "+" || k === "=") { cambiarZoom(1); e.preventDefault(); }
+      else if (k === "-") { cambiarZoom(-1); e.preventDefault(); }
+      else if (k === "0") { cambiarZoom(0); e.preventDefault(); }
+      else if ((k === "f" || k === "F") && puedeFull) { pantallaCompleta(); e.preventDefault(); }
+    }
+    function onScroll() { if (!rafScroll) rafScroll = requestAnimationFrame(actualizarActual); }
+    function onResize() {
+      clearTimeout(timerResize);
+      timerResize = setTimeout(function () { if (total && Math.abs(Math.round(anchoBase() * zoom) - ancho) > 2) maquetar(actual); }, 150);
+    }
+
+    document.getElementById("pv-prev").addEventListener("click", function () { irA(actual - 1); });
+    document.getElementById("pv-next").addEventListener("click", function () { irA(actual + 1); });
+    document.getElementById("pv-menos").addEventListener("click", function () { cambiarZoom(-1); });
+    document.getElementById("pv-mas").addEventListener("click", function () { cambiarZoom(1); });
+    btnZoom.addEventListener("click", function () { cambiarZoom(0); });
+    if (puedeFull) document.getElementById("pv-full").addEventListener("click", pantallaCompleta);
+    inNum.addEventListener("change", function () { irA(parseInt(inNum.value, 10) || 1); inNum.blur(); });
+    inNum.addEventListener("keydown", function (e) { if (e.key === "Enter") { irA(parseInt(inNum.value, 10) || 1); inNum.blur(); } });
+    cont.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+    document.addEventListener("keydown", onKey);
+
+    limpiarTeclado = function () {
+      vivo = false;
+      if (obs) obs.disconnect();
+      Object.keys(tareas).forEach(function (k) { try { tareas[k].cancel(); } catch (e) {} });
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("keydown", onKey);
+      if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+      if (doc) doc.destroy();
+    };
+
+    function alternativa() {
+      if (!vivo) return;
+      lista.innerHTML =
+        '<div class="pv-estado"><p>Este navegador no ha podido abrir el visor de la web.</p>' +
+        '<p class="meta">Suele pasar al abrir la web con doble clic desde el ordenador; publicada en GitHub funciona bien.</p>' +
+        '<div class="acciones" style="justify-content:center"><a class="btn primario" href="' + url + '" target="_blank" rel="noopener">Abrir el PDF</a>' +
+        '<a class="btn" href="' + url + '" download>Descargar</a></div></div>' +
+        '<iframe class="pv-iframe" src="' + url + '" title="' + esc(titulo) + '"></iframe>';
+    }
+
+    cargarPdfJs().then(function (pdfjsLib) {
+      if (!vivo) return;
+      var tarea = pdfjsLib.getDocument({ url: pdf.archivo });
+      tarea.onProgress = function (p) {
+        if (p.total && vivo) document.getElementById("pv-estado").textContent = "Cargando PDF… " + Math.min(100, Math.round(p.loaded / p.total * 100)) + "%";
+      };
+      return tarea.promise.then(function (d) {
+        if (!vivo) { d.destroy(); return; }
+        doc = d; total = d.numPages;
+        document.getElementById("pv-total").textContent = "/ " + total;
+        inNum.max = total;
+        return d.getPage(1).then(function (p1) {
+          var vp = p1.getViewport({ scale: 1 });
+          ratios[1] = vp.height / vp.width;
+          var html = "";
+          for (var k = 1; k <= total; k++) html += '<div class="pv-pagina" data-n="' + k + '" aria-label="Página ' + k + '"></div>';
+          var sig = pdfs[i + 1], ant = pdfs[i - 1];
+          html += '<div class="pv-fin"><strong>Fin de «' + esc(titulo) + '»</strong><div class="acciones">' +
+            (pdf.tema ? '<a class="btn primario" href="' + base + "/test/todas/" + encodeURIComponent(pdf.tema) + '">Hacer test de este tema</a>' : "") +
+            (ant ? '<a class="btn" href="' + base + "/pdf/" + (i - 1) + '">← ' + esc(ant.titulo) + "</a>" : "") +
+            (sig ? '<a class="btn" href="' + base + "/pdf/" + (i + 1) + '">' + esc(sig.titulo) + " →</a>" : "") +
+            "</div></div>";
+          lista.innerHTML = html;
+          paginas = [null].concat(Array.prototype.slice.call(lista.querySelectorAll(".pv-pagina")));
+          obs = new IntersectionObserver(function (entradas) {
+            entradas.forEach(function (en) {
+              var k = +en.target.dataset.n;
+              if (en.isIntersecting) pintarPagina(k);
+              else if (en.target.dataset.gen) { vaciar(en.target); }
+            });
+          }, { root: cont, rootMargin: "1200px 0px" });
+          var guardada = store.get(clave, 1);
+          maquetar(guardada > 1 && guardada <= total ? guardada : 1);
+          cont.focus({ preventScroll: true });
+        });
+      });
+    }).catch(alternativa);
   }
+
+  var pdfjsPromesa = null;
+  function cargarPdfJs() {
+    if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if (pdfjsPromesa) return pdfjsPromesa;
+    pdfjsPromesa = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "js/vendor/pdfjs/pdf.min.js";
+      s.onload = function () {
+        if (!window.pdfjsLib) return reject(new Error("pdfjs"));
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "js/vendor/pdfjs/pdf.worker.min.js";
+        resolve(window.pdfjsLib);
+      };
+      s.onerror = function () { pdfjsPromesa = null; reject(new Error("pdfjs")); };
+      document.head.appendChild(s);
+    });
+    return pdfjsPromesa;
+  }
+
+  var ICO = (function () {
+    function svg(d) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + "</svg>"; }
+    return {
+      atras: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
+      izq: svg('<path d="M15 18l-6-6 6-6"/>'),
+      der: svg('<path d="M9 18l6-6-6-6"/>'),
+      menos: svg('<path d="M5 12h14"/>'),
+      mas: svg('<path d="M12 5v14M5 12h14"/>'),
+      full: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+      bajar: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>'),
+      fuera: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>')
+    };
+  })();
 
   /* ---------- Vista: configuración del test ---------- */
   function vistaTestConfig(curso, asig, origen, temaInicial) {

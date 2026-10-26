@@ -8,7 +8,10 @@ Web para estudiar organizada por **curso → asignatura → tema**.
   - 306 preguntas creadas por Claude a partir de los apuntes, con explicación.
 
 **Funciones**
-- Apuntes en PDF con visor integrado, agrupados por tema.
+- Apuntes en PDF agrupados por tema, con un visor propio:
+  - diapositivas a toda la pantalla y nítidas;
+  - zoom, saltar a una página y pantalla completa;
+  - recuerda en qué página te quedaste.
 - Cuatro tipos de test: Campus virtual, Exámenes anteriores, Creadas por Claude y Todas.
 - «Tests por tema»: cada tema tiene su acceso a cada tipo de test.
 - Corrección al momento con explicación, nota sobre 10 y repaso de fallos.
@@ -42,7 +45,7 @@ Web para estudiar organizada por **curso → asignatura → tema**.
 - La web se actualiza sola en 1–2 minutos.
 
 ### Verla en tu ordenador
-Abre `index.html` con doble clic. Funciona sin internet, salvo las fuentes de letra.
+Abre `index.html` con doble clic. Los tests funcionan. Los PDFs se abren con el visor del navegador, porque el visor de la web solo funciona publicada (o servida con `python -m http.server`).
 
 ---
 
@@ -74,6 +77,7 @@ Añade otro bloque en `window.CURSOS` con `id: "4"` y crea las carpetas `pdfs/4/
 index.html                 página principal
 css/styles.css             estilos
 js/app.js                  lógica (no hace falta tocarlo)
+js/vendor/pdfjs/           visor de PDF (PDF.js de Mozilla)
 data/cursos.js             cursos, asignaturas, temas y PDFs
 data/preguntas/3/sew.js    preguntas de SEW
 pdfs/3/sew/                apuntes de SEW
