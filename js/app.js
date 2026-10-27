@@ -159,6 +159,7 @@
     if (p.length === 4) return vistaAsignatura(curso, asig);
     if (p[4] === "pdf") return vistaPdf(curso, asig, parseInt(p[5], 10));
     if (p[4] === "test" && ORIGENES[p[5]]) return vistaTestConfig(curso, asig, p[5], p[6] || "");
+    if (p[4] === "cortas") return vistaCortasConfig(curso, asig, p[5] || "");
     return noEncontrado();
   }
 
@@ -279,11 +280,21 @@
         '<span class="cuerpo"><span class="titulo">' + info.nombre + '</span><br><span class="meta">' + info.desc + "</span></span>" +
         '<span class="num">…<small>preguntas</small></span></a>';
     });
+    html += '<a class="tarjeta test-card" data-cortas href="' + base + '/cortas">' +
+      '<span class="icono" aria-hidden="true">✍️</span>' +
+      '<span class="cuerpo"><span class="titulo">Preguntas cortas</span><br><span class="meta">Respondes con tus palabras y se corrige con los apuntes' + (IA.activa() ? " y con IA" : "") + '.</span></span>' +
+      '<span class="num">…<small>preguntas</small></span></a>';
     html += '</div><div id="por-temas"></div></section></div>';
     pintar(html);
 
-    cargarPreguntas(curso.id, asig.id).then(function (lista) {
-      pintarPorTemas(curso, asig, lista);
+    Promise.all([cargarPreguntas(curso.id, asig.id), cargarCortas(curso.id, asig.id)]).then(function (r) {
+      var lista = r[0], cortas = r[1];
+      pintarPorTemas(curso, asig, lista, cortas);
+      var cc = app.querySelector("[data-cortas]");
+      if (cc) {
+        cc.querySelector(".num").innerHTML = cortas.length + "<small>" + (cortas.length === 1 ? "pregunta" : "preguntas") + "</small>";
+        if (!cortas.length) cc.classList.add("vacio");
+      }
       var tot = document.getElementById("total-preg");
       if (tot) tot.textContent = plural(lista.length, "pregunta", "preguntas");
       ORDEN_ORIGENES.forEach(function (o) {
@@ -313,13 +324,14 @@
     return orden.concat(extra);
   }
 
-  function pintarPorTemas(curso, asig, lista) {
+  function pintarPorTemas(curso, asig, lista, cortas) {
     var cont = document.getElementById("por-temas");
-    if (!cont || !lista.length) return;
+    cortas = cortas || [];
+    if (!cont || (!lista.length && !cortas.length)) return;
     var base = rutaAsig(curso, asig);
     var fallos = store.get("fallos:" + curso.id + "/" + asig.id, []);
-    var temas = listaTemas(asig, lista).filter(function (t) {
-      return lista.some(function (q) { return q.tema === t; });
+    var temas = listaTemas(asig, lista.concat(cortas)).filter(function (t) {
+      return lista.some(function (q) { return q.tema === t; }) || cortas.some(function (q) { return q.tema === t; });
     });
     var html = '<div class="seccion-titulo" style="margin-top:28px"><h2>Tests por tema</h2>' +
       '<span class="meta">' + plural(temas.length, "tema", "temas") + '</span></div><div class="temas">';
@@ -338,6 +350,10 @@
             ORIGENES[o].icono + " " + etiqueta + " <b>" + n + "</b></a>"
           : '<span class="mini mini-off">' + ORIGENES[o].icono + " " + etiqueta + " <b>0</b></span>";
       });
+      var nC = cortas.filter(function (q) { return q.tema === t; }).length;
+      html += nC
+        ? '<a class="mini mini-cortas" href="' + base + "/cortas/" + encodeURIComponent(t) + '">✍️ Cortas <b>' + nC + "</b></a>"
+        : '<span class="mini mini-off">✍️ Cortas <b>0</b></span>';
       html += "</div></div>";
     });
     html += "</div>";
@@ -949,6 +965,436 @@
       if (rf) rf.addEventListener("click", function () {
         iniciarTest(curso, asig, origen, falladas.map(function (x) { return x.q; }), mezclar);
       });
+      document.getElementById("nuevo").addEventListener("click", function () { router(); });
+    }
+
+    pintarPregunta();
+  }
+
+  /* =========================================================
+     PREGUNTAS CORTAS (respuesta escrita, corrección por conceptos clave
+     y, opcionalmente, con la IA gratuita de Google Gemini)
+     ========================================================= */
+  var cacheCortas = {}, cargandoCortas = {};
+  window.registrarCortas = function (curso, asig, lista) {
+    cacheCortas[curso + "/" + asig] = (lista || []).filter(function (q) {
+      return q && q.pregunta && q.respuesta;
+    }).map(function (q) {
+      return {
+        id: q.id || "c:" + hash(q.pregunta), tema: q.tema || "Sin tema", pregunta: q.pregunta,
+        respuesta: q.respuesta, claves: q.claves || []
+      };
+    });
+  };
+  function cargarCortas(curso, asig) {
+    var key = curso + "/" + asig;
+    if (cacheCortas[key]) return Promise.resolve(cacheCortas[key]);
+    if (cargandoCortas[key]) return cargandoCortas[key];
+    cargandoCortas[key] = new Promise(function (resolve) {
+      var s = document.createElement("script");
+      s.src = "data/cortas/" + encodeURIComponent(curso) + "/" + encodeURIComponent(asig) + ".js";
+      s.onload = function () { resolve(cacheCortas[key] || (cacheCortas[key] = [])); };
+      s.onerror = function () { cacheCortas[key] = []; resolve([]); };
+      document.head.appendChild(s);
+    });
+    return cargandoCortas[key];
+  }
+
+  function normTexto(t) {
+    return " " + String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ") + " ";
+  }
+  // Devuelve qué conceptos clave aparecen en la respuesta
+  function revisarClaves(q, texto) {
+    var r = normTexto(texto);
+    return q.claves.map(function (k) {
+      var ok = (k.b || []).some(function (b) {
+        return normTexto(b).trim().split("&").every(function (p) { return p && r.indexOf(p.trim()) >= 0; });
+      });
+      return { t: k.t, ok: ok };
+    });
+  }
+
+  /* ---------- IA: Google Gemini (capa gratuita, clave del propio usuario) ---------- */
+  var IA = {
+    API: "https://generativelanguage.googleapis.com/v1beta/",
+    cfg: function () { return store.get("ia", null); },
+    activa: function () { var c = IA.cfg(); return !!(c && c.key && c.modelo); },
+    error: function (status, j) {
+      var msg = j && j.error && j.error.message ? j.error.message : "";
+      if (status === 400 && /api key/i.test(msg)) return "La clave no es válida. Revisa que la has copiado entera.";
+      if (status === 403) return "La clave no tiene permiso para usar Gemini. Créala desde Google AI Studio.";
+      if (status === 429) return "Has llegado al límite gratuito de Gemini (por minuto o por día). Espera un poco o prueba mañana.";
+      if (status === 404) return "Ese modelo ya no existe. Vuelve a comprobar la clave para elegir otro.";
+      if (status >= 500) return "Los servidores de Gemini no responden ahora mismo. Inténtalo de nuevo en un rato.";
+      return "Error " + status + (msg ? ": " + msg : "");
+    },
+    pedir: function (url, opciones, key) {
+      opciones = opciones || {};
+      opciones.headers = Object.assign({ "x-goog-api-key": key }, opciones.headers || {});
+      return fetch(url, opciones).catch(function () {
+        throw new Error("No se ha podido conectar con Gemini. Revisa tu conexión a internet.");
+      }).then(function (r) {
+        return r.text().then(function (t) {
+          var j = null; try { j = JSON.parse(t); } catch (e) {}
+          if (!r.ok) throw new Error(IA.error(r.status, j));
+          return j;
+        });
+      });
+    },
+    listarModelos: function (key) {
+      return IA.pedir(IA.API + "models?pageSize=200", {}, key).then(function (j) {
+        return ((j && j.models) || []).filter(function (m) {
+          return (m.supportedGenerationMethods || []).indexOf("generateContent") >= 0;
+        }).map(function (m) { return m.name.replace(/^models\//, ""); }).filter(function (n) {
+          return /gemini/i.test(n) && !/(embed|tts|image|audio|live|vision|aqa|robotic|computer|native)/i.test(n);
+        });
+      });
+    },
+    // Preferimos los «flash-lite» (más peticiones gratis al día), luego «flash»; los más nuevos primero y sin «preview»
+    modeloRecomendado: function (lista) {
+      function ver(n) { var m = n.match(/(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; }
+      function mejor(filtro) {
+        return lista.filter(filtro).sort(function (a, b) { return ver(b) - ver(a) || a.length - b.length; })[0];
+      }
+      return mejor(function (n) { return /flash-lite/.test(n) && !/preview|exp/.test(n); }) ||
+        mejor(function (n) { return /flash/.test(n) && !/preview|exp/.test(n); }) ||
+        mejor(function (n) { return /flash/.test(n); }) || lista[0];
+    },
+    corregir: function (q, asigNombre, texto) {
+      var c = IA.cfg();
+      var sistema = "Eres profesor de la asignatura universitaria «" + asigNombre + "» y corriges respuestas cortas de un alumno. " +
+        "Corrige en español, tuteando al alumno y de forma justa: valora el contenido, no la redacción ni la ortografía, y acepta sinónimos y explicaciones equivalentes. " +
+        "La respuesta modelo y los conceptos clave vienen de los apuntes de la asignatura: úsalos como referencia principal. " +
+        "Si el alumno dice algo incorrecto, señálalo. No inventes requisitos que no estén en la respuesta modelo. " +
+        "Responde SOLO con un objeto JSON con estas claves: " +
+        "\"nota\" (número de 0 a 10), \"veredicto\" (\"bien\", \"parcial\" o \"mal\"), " +
+        "\"comentario\" (2 o 3 frases explicando la corrección), \"falta\" (lista de ideas importantes que faltan, puede estar vacía), " +
+        "\"errores\" (lista de afirmaciones incorrectas del alumno, puede estar vacía).";
+      var usuario = "PREGUNTA:\n" + q.pregunta + "\n\nRESPUESTA MODELO (apuntes):\n" + q.respuesta +
+        "\n\nCONCEPTOS CLAVE:\n- " + q.claves.map(function (k) { return k.t; }).join("\n- ") +
+        "\n\nRESPUESTA DEL ALUMNO:\n" + texto;
+      var cuerpo = {
+        system_instruction: { parts: [{ text: sistema }] },
+        contents: [{ role: "user", parts: [{ text: usuario }] }],
+        generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
+      };
+      return IA.pedir(IA.API + "models/" + encodeURIComponent(c.modelo) + ":generateContent", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cuerpo)
+      }, c.key).then(function (j) {
+        var cand = j && j.candidates && j.candidates[0];
+        var partes = (cand && cand.content && cand.content.parts) || [];
+        var txt = partes.filter(function (p) { return p.text && !p.thought; }).map(function (p) { return p.text; }).join("").trim();
+        if (!txt) throw new Error("Gemini no ha devuelto ninguna corrección" + (cand && cand.finishReason ? " (" + cand.finishReason + ")" : "") + ".");
+        txt = txt.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+        var ini = txt.indexOf("{"), fin = txt.lastIndexOf("}");
+        try { return JSON.parse(txt.slice(ini, fin + 1)); }
+        catch (e) { return { nota: null, veredicto: "", comentario: txt, falta: [], errores: [] }; }
+      });
+    }
+  };
+
+  function panelIaHtml() {
+    var c = IA.cfg();
+    return '<details class="panel ia-panel" id="ia-panel"' + (IA.activa() ? "" : " open") + ">" +
+      '<summary><span class="ia-titulo">🤖 Corrección con IA (Gemini, gratis)</span>' +
+      '<span class="ia-estado ' + (IA.activa() ? "on" : "off") + '" id="ia-estado">' + (IA.activa() ? "Activada · " + esc(c.modelo) : "Desactivada") + "</span></summary>" +
+      '<div class="ia-cuerpo">' +
+      '<p class="meta">Sin IA, la web te corrige comparando tu respuesta con los conceptos clave y te enseña la respuesta modelo. Con IA, además, Gemini te pone nota y te explica qué falta o qué está mal, aunque lo digas con otras palabras.</p>' +
+      '<ol class="ia-pasos"><li>Entra en <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> con tu cuenta de Google.</li>' +
+      "<li>Pulsa <b>Create API key</b> (crear clave) y cópiala.</li><li>Pégala aquí y pulsa <b>Guardar y comprobar</b>.</li></ol>" +
+      '<div class="ia-form"><input type="password" id="ia-key" autocomplete="off" spellcheck="false" placeholder="Pega aquí tu clave (empieza por AIza…)" value="' + esc(c && c.key || "") + '">' +
+      '<button class="btn primario" type="button" id="ia-guardar">Guardar y comprobar</button></div>' +
+      '<div class="ia-form" id="ia-modelo-fila"' + (c && c.modelo ? "" : " hidden") + '><label for="ia-modelo">Modelo</label><select id="ia-modelo">' +
+      (c && c.modelo ? '<option value="' + esc(c.modelo) + '">' + esc(c.modelo) + "</option>" : "") + "</select>" +
+      '<button class="btn" type="button" id="ia-quitar">Quitar clave</button></div>' +
+      '<p class="ia-msg" id="ia-msg"></p>' +
+      '<p class="meta ia-nota">🔒 La clave se guarda solo en este navegador, no en GitHub. Tus respuestas se envían a Google para corregirlas; con la capa gratuita Google puede usarlas para mejorar sus productos, así que no escribas datos personales. El límite gratuito es de unas pocas decenas o cientos de correcciones al día, según el modelo.</p>' +
+      "</div></details>";
+  }
+
+  function activarPanelIa() {
+    var msg = document.getElementById("ia-msg");
+    var inKey = document.getElementById("ia-key");
+    var sel = document.getElementById("ia-modelo");
+    var fila = document.getElementById("ia-modelo-fila");
+    function estado() {
+      var el = document.getElementById("ia-estado"), c = IA.cfg();
+      el.textContent = IA.activa() ? "Activada · " + c.modelo : "Desactivada";
+      el.className = "ia-estado " + (IA.activa() ? "on" : "off");
+    }
+    document.getElementById("ia-guardar").addEventListener("click", function () {
+      var key = inKey.value.trim();
+      if (!key) { msg.className = "ia-msg mal"; msg.textContent = "Pega primero tu clave."; return; }
+      msg.className = "ia-msg"; msg.textContent = "Comprobando la clave…";
+      IA.listarModelos(key).then(function (lista) {
+        if (!lista.length) throw new Error("La clave funciona, pero no hay modelos Gemini disponibles para ella.");
+        var actual = (IA.cfg() || {}).modelo;
+        var elegido = lista.indexOf(actual) >= 0 ? actual : IA.modeloRecomendado(lista);
+        sel.innerHTML = lista.map(function (n) {
+          return '<option value="' + esc(n) + '"' + (n === elegido ? " selected" : "") + ">" + esc(n) + (n === IA.modeloRecomendado(lista) ? " (recomendado)" : "") + "</option>";
+        }).join("");
+        store.set("ia", { key: key, modelo: elegido });
+        fila.hidden = false;
+        msg.className = "ia-msg ok"; msg.textContent = "✓ Clave correcta. La corrección con IA está activada.";
+        estado();
+      }).catch(function (e) { msg.className = "ia-msg mal"; msg.textContent = e.message; });
+    });
+    sel.addEventListener("change", function () {
+      var c = IA.cfg(); if (!c) return;
+      c.modelo = sel.value; store.set("ia", c); estado();
+      msg.className = "ia-msg ok"; msg.textContent = "Modelo cambiado a " + sel.value + ".";
+    });
+    document.getElementById("ia-quitar").addEventListener("click", function () {
+      try { localStorage.removeItem("estudio:ia"); } catch (e) {}
+      inKey.value = ""; sel.innerHTML = ""; fila.hidden = true;
+      msg.className = "ia-msg"; msg.textContent = "Clave borrada de este navegador.";
+      estado();
+    });
+  }
+
+  /* ---------- Vista: configuración de preguntas cortas ---------- */
+  function vistaCortasConfig(curso, asig, temaInicial) {
+    var base = rutaAsig(curso, asig);
+    var m = [
+      { txt: curso.nombre, href: "#/c/" + encodeURIComponent(curso.id) },
+      { txt: asig.nombre, href: base },
+      { txt: "Preguntas cortas", href: temaInicial ? base + "/cortas" : null }
+    ];
+    if (temaInicial) m.push({ txt: temaInicial });
+    ponerMigas(m);
+    pintar('<p style="color:var(--texto-suave)">Cargando preguntas…</p>');
+
+    cargarCortas(curso.id, asig.id).then(function (lista) {
+      var html = '<div class="cabecera"><div class="kicker">' + esc(asig.nombre) + "</div><h1>✍️ Preguntas cortas</h1>" +
+        '<p class="sub">Escribe la respuesta con tus palabras y corrígela con los conceptos clave de los apuntes' + (IA.activa() ? " y con la IA" : "") + ".</p></div>";
+      if (!lista.length) {
+        html += '<div class="vacio-msg"><strong>Todavía no hay preguntas cortas</strong>Añádelas en <code>data/cortas/' +
+          esc(curso.id) + "/" + esc(asig.id) + ".js</code>.</div>" + panelIaHtml();
+        pintar(html); activarPanelIa(); return;
+      }
+      var temas = listaTemas(asig, lista).filter(function (t) { return lista.some(function (q) { return q.tema === t; }); });
+      var porTema = {};
+      temas.forEach(function (t) { porTema[t] = lista.filter(function (q) { return q.tema === t; }); });
+      var claveTemas = "temasExcluidos:" + curso.id + "/" + asig.id;
+      var excluidos = store.get(claveTemas, []);
+      var notas = store.get("cortas:" + curso.id + "/" + asig.id, {});
+      function flojas(q) { return notas[q.id] === "mal" || notas[q.id] === "parcial"; }
+      var cfg = store.get("cfgCortas", { num: 5, mezclar: true });
+      var opcionesNum = [5, 10, 20].filter(function (n) { return n < lista.length; });
+
+      html += '<div class="panel"><div class="campo"><div class="campo-cab"><label>Temas que entran</label>' +
+        '<span class="mini-acciones"><button type="button" id="t-todos">Todos</button><button type="button" id="t-ninguno">Ninguno</button></span></div>' +
+        '<div class="temas-check" id="f-temas">' +
+        temas.map(function (t, k) {
+          var marcado = temaInicial ? t === temaInicial : excluidos.indexOf(t) < 0;
+          return '<label class="tcheck"><input type="checkbox" value="' + k + '"' + (marcado ? " checked" : "") + ">" +
+            '<span class="tnom">' + esc(t) + '</span><span class="tnum" data-k="' + k + '">' + porTema[t].length + "</span></label>";
+        }).join("") + "</div></div>" +
+        '<div class="campo" style="margin-top:22px"><label>Número de preguntas</label><div class="segmentado" id="f-num">' +
+        opcionesNum.map(function (n) { return '<button type="button" data-n="' + n + '">' + n + "</button>"; }).join("") +
+        '<button type="button" data-n="0">Todas</button></div></div>' +
+        '<div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">' +
+        '<label class="check"><input type="checkbox" id="f-mezclar"' + (cfg.mezclar ? " checked" : "") + "> Mezclar el orden</label>" +
+        '<label class="check"><input type="checkbox" id="f-flojas"> Solo las que me salieron mal o a medias <span class="meta" id="n-flojas"></span></label></div>' +
+        '<div class="acciones"><button class="btn primario" id="empezar" type="button">Empezar</button>' +
+        '<a class="btn" href="' + base + '">Volver</a></div>' +
+        '<p id="disponibles" style="margin-top:12px;font-size:.88rem;color:var(--texto-suave)"></p></div>' +
+        panelIaHtml();
+      pintar(html);
+      activarPanelIa();
+
+      var checks = Array.prototype.slice.call(document.querySelectorAll("#f-temas input"));
+      var chkFlojas = document.getElementById("f-flojas"), chkMezclar = document.getElementById("f-mezclar");
+      var botonesNum = Array.prototype.slice.call(document.querySelectorAll("#f-num button"));
+      var num = cfg.num;
+      if (!botonesNum.some(function (b) { return +b.dataset.n === num; })) num = 0;
+      function marcados() { return checks.filter(function (c) { return c.checked; }).map(function (c) { return temas[+c.value]; }); }
+      function seleccion() {
+        var ts = marcados();
+        return lista.filter(function (q) { return ts.indexOf(q.tema) >= 0 && (!chkFlojas.checked || flojas(q)); });
+      }
+      function actualizar() {
+        botonesNum.forEach(function (b) { b.setAttribute("aria-pressed", String(+b.dataset.n === num)); });
+        var ts = marcados();
+        var nF = lista.filter(function (q) { return flojas(q) && ts.indexOf(q.tema) >= 0; }).length;
+        document.getElementById("n-flojas").textContent = "(" + nF + ")";
+        chkFlojas.disabled = nF === 0; if (!nF) chkFlojas.checked = false;
+        temas.forEach(function (t, k) {
+          document.querySelector('.tnum[data-k="' + k + '"]').textContent = chkFlojas.checked ? porTema[t].filter(flojas).length : porTema[t].length;
+        });
+        checks.forEach(function (c) { c.parentNode.classList.toggle("off", !c.checked); });
+        var disp = seleccion().length, haras = num ? Math.min(num, disp) : disp;
+        document.getElementById("disponibles").textContent = !ts.length ? "Marca al menos un tema" :
+          plural(ts.length, "tema", "temas") + " · " + plural(disp, "pregunta disponible", "preguntas disponibles") + " · harás " + haras;
+        document.getElementById("empezar").disabled = disp === 0;
+      }
+      botonesNum.forEach(function (b) { b.addEventListener("click", function () { num = +b.dataset.n; actualizar(); }); });
+      checks.forEach(function (c) { c.addEventListener("change", actualizar); });
+      chkFlojas.addEventListener("change", actualizar);
+      document.getElementById("t-todos").addEventListener("click", function () { checks.forEach(function (c) { c.checked = true; }); actualizar(); });
+      document.getElementById("t-ninguno").addEventListener("click", function () { checks.forEach(function (c) { c.checked = false; }); actualizar(); });
+      actualizar();
+      document.getElementById("empezar").addEventListener("click", function () {
+        store.set("cfgCortas", { num: num, mezclar: chkMezclar.checked });
+        if (!temaInicial) { var ts = marcados(); store.set(claveTemas, temas.filter(function (t) { return ts.indexOf(t) < 0; })); }
+        var sel = seleccion();
+        if (chkMezclar.checked) sel = barajar(sel);
+        if (num) sel = sel.slice(0, num);
+        iniciarCortas(curso, asig, sel);
+      });
+    });
+  }
+
+  /* ---------- Preguntas cortas en marcha ---------- */
+  var VEREDICTOS = { bien: { txt: "Bien", ico: "✓" }, parcial: { txt: "A medias", ico: "½" }, mal: { txt: "Mal", ico: "✗" } };
+
+  function iniciarCortas(curso, asig, preguntas) {
+    var base = rutaAsig(curso, asig);
+    var claveNotas = "cortas:" + curso.id + "/" + asig.id;
+    var items = preguntas.map(function (q) { return { q: q, texto: "", res: null }; });
+    var pos = 0;
+
+    function cuenta(v) { return items.filter(function (x) { return x.res === v; }).length; }
+    function marcador() {
+      return '<span class="ok">✓ ' + cuenta("bien") + '</span><span class="media">½ ' + cuenta("parcial") + '</span><span class="mal">✗ ' + cuenta("mal") + "</span>";
+    }
+
+    function pintarPregunta() {
+      var it = items[pos], q = it.q;
+      pintar('<div class="quiz">' +
+        '<div class="quiz-top"><span>Pregunta ' + (pos + 1) + " de " + items.length + '</span><span class="marcador">' + marcador() + "</span></div>" +
+        '<div class="progreso"><div style="width:' + (pos / items.length * 100) + '%"></div></div>' +
+        '<div class="pregunta-meta"><span class="chip">✍️ Pregunta corta</span><span class="chip">' + esc(q.tema) + "</span></div>" +
+        '<div class="enunciado">' + esc(q.pregunta) + "</div>" +
+        '<textarea id="resp" class="resp-corta" rows="6" placeholder="Escribe aquí tu respuesta con tus palabras…"></textarea>' +
+        '<div class="acciones" id="acc-responder"><button class="btn primario" type="button" id="corregir">Corregir</button>' +
+        '<button class="btn" type="button" id="nolose">No lo sé, enséñame la respuesta</button></div>' +
+        '<div id="correccion"></div>' +
+        '<div class="acciones quiz-acciones"><button class="btn" type="button" id="salir">Terminar aquí</button></div>' +
+        '<p class="atajos"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> para corregir · después <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> para valorar</p></div>');
+      var ta = document.getElementById("resp");
+      ta.focus({ preventScroll: true });
+      ta.addEventListener("input", function () { ta.classList.remove("vacia"); });
+      document.getElementById("corregir").addEventListener("click", function () { corregir(false); });
+      document.getElementById("nolose").addEventListener("click", function () { corregir(true); });
+      document.getElementById("salir").addEventListener("click", function () {
+        var hechas = items.filter(function (x) { return x.res; });
+        if (!hechas.length) { router(); return; }
+        items = hechas; mostrarResultado();
+      });
+    }
+
+    function corregir(sinRespuesta) {
+      var it = items[pos], q = it.q;
+      var ta = document.getElementById("resp");
+      it.texto = sinRespuesta ? "" : ta.value.trim();
+      if (!sinRespuesta && !it.texto) { ta.focus(); ta.classList.add("vacia"); return; }
+      ta.readOnly = true;
+      document.getElementById("acc-responder").hidden = true;
+      var claves = revisarClaves(q, it.texto);
+      var nOk = claves.filter(function (c) { return c.ok; }).length;
+      var ratio = claves.length ? nOk / claves.length : 0;
+      var sugerido = sinRespuesta ? "mal" : ratio >= 0.75 ? "bien" : ratio >= 0.4 ? "parcial" : "mal";
+      var usarIa = IA.activa() && !sinRespuesta;
+
+      var html = "";
+      if (usarIa) html += '<div class="ia-res cargando" id="ia-res"><span class="spinner"></span> Corrigiendo con IA…</div>';
+      if (!sinRespuesta && claves.length) {
+        html += '<div class="bloque-corr"><div class="bloque-tit">Conceptos clave <span class="meta">has mencionado ' + nOk + " de " + claves.length + "</span></div>" +
+          '<ul class="claves">' + claves.map(function (c) {
+            return '<li class="' + (c.ok ? "ok" : "mal") + '"><span>' + (c.ok ? "✓" : "✗") + "</span>" + esc(c.t) + "</li>";
+          }).join("") + "</ul>" +
+          '<p class="meta">La búsqueda de conceptos es automática y no entiende sinónimos: si lo has dicho con otras palabras, cuenta como bien.</p></div>';
+      }
+      html += '<div class="bloque-corr modelo"><div class="bloque-tit">Respuesta modelo</div><p>' + esc(q.respuesta) + "</p></div>" +
+        '<div class="autoeval"><div class="bloque-tit">¿Cómo te ha salido?</div><div class="autoeval-btns">' +
+        ["bien", "parcial", "mal"].map(function (v, k) {
+          return '<button type="button" class="btn ae-' + v + (v === sugerido ? " sugerido" : "") + '" data-v="' + v + '"><kbd>' + (k + 1) + "</kbd> " +
+            VEREDICTOS[v].ico + " " + VEREDICTOS[v].txt + "</button>";
+        }).join("") + '</div><p class="meta" id="sugerencia">' + (sinRespuesta ? "" : "Sugerencia según los conceptos clave: <b>" + VEREDICTOS[sugerido].txt + "</b>") + "</p></div>";
+      var cont = document.getElementById("correccion");
+      cont.innerHTML = html;
+      Array.prototype.forEach.call(cont.querySelectorAll(".autoeval-btns .btn"), function (b) {
+        b.addEventListener("click", function () { valorar(b.dataset.v); });
+      });
+      cont.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (usarIa) pedirIa(it);
+    }
+
+    function pedirIa(it) {
+      var caja = document.getElementById("ia-res");
+      caja.className = "ia-res cargando";
+      caja.innerHTML = '<span class="spinner"></span> Corrigiendo con IA…';
+      var miPos = pos;
+      IA.corregir(it.q, asig.nombre, it.texto).then(function (r) {
+        if (miPos !== pos || !document.getElementById("ia-res")) return;
+        var v = VEREDICTOS[r.veredicto] ? r.veredicto : null;
+        var nota = typeof r.nota === "number" ? Math.max(0, Math.min(10, r.nota)) : null;
+        caja.className = "ia-res " + (v || "");
+        caja.innerHTML = '<div class="ia-cab"><span class="bloque-tit">🤖 Corrección de la IA</span>' +
+          (nota !== null ? '<span class="ia-nota-num">' + String(Math.round(nota * 10) / 10).replace(".", ",") + "<small>/10</small></span>" : "") + "</div>" +
+          (r.comentario ? "<p>" + esc(r.comentario) + "</p>" : "") +
+          (r.errores && r.errores.length ? '<div class="ia-lista mal"><b>Errores</b><ul>' + r.errores.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></div>" : "") +
+          (r.falta && r.falta.length ? '<div class="ia-lista"><b>Te ha faltado</b><ul>' + r.falta.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></div>" : "");
+        if (v) {
+          Array.prototype.forEach.call(document.querySelectorAll(".autoeval-btns .btn"), function (b) { b.classList.toggle("sugerido", b.dataset.v === v); });
+          document.getElementById("sugerencia").innerHTML = "Sugerencia de la IA: <b>" + VEREDICTOS[v].txt + "</b>";
+        }
+      }).catch(function (e) {
+        if (miPos !== pos || !document.getElementById("ia-res")) return;
+        caja.className = "ia-res error";
+        caja.innerHTML = "<p>⚠️ " + esc(e.message) + '</p><button class="btn" type="button" id="ia-reintentar">Reintentar</button>';
+        document.getElementById("ia-reintentar").addEventListener("click", function () { pedirIa(it); });
+      });
+    }
+
+    function valorar(v) {
+      var it = items[pos];
+      if (!document.querySelector(".autoeval-btns")) return;
+      it.res = v;
+      var notas = store.get(claveNotas, {});
+      notas[it.q.id] = v;
+      store.set(claveNotas, notas);
+      pos++;
+      if (pos < items.length) pintarPregunta(); else mostrarResultado();
+    }
+
+    function teclado(e) {
+      if (e.altKey || e.metaKey) return;
+      var ta = document.getElementById("resp");
+      if (!ta) return;
+      if (e.key === "Enter" && e.ctrlKey && !ta.readOnly) { corregir(false); e.preventDefault(); return; }
+      if (e.ctrlKey || !ta.readOnly) return;
+      var mapa = { "1": "bien", "2": "parcial", "3": "mal" };
+      if (mapa[e.key] && document.querySelector(".autoeval-btns")) { valorar(mapa[e.key]); e.preventDefault(); }
+    }
+    document.addEventListener("keydown", teclado);
+    limpiarTeclado = function () { document.removeEventListener("keydown", teclado); };
+
+    function mostrarResultado() {
+      if (limpiarTeclado) { limpiarTeclado(); limpiarTeclado = null; }
+      var b = cuenta("bien"), p = cuenta("parcial"), m = cuenta("mal"), total = items.length;
+      var pct = total ? Math.round((b + p * 0.5) / total * 100) : 0;
+      var clase = pct >= 70 ? "ok" : pct >= 50 ? "media" : "mal";
+      var repasar = items.filter(function (x) { return x.res !== "bien"; });
+      var html = '<div class="quiz"><div class="resultado-cabecera">' +
+        '<div class="nota-grande ' + clase + '">' + (pct / 10).toFixed(1).replace(".", ",") + "</div>" +
+        "<p><strong>" + b + " bien · " + p + " a medias · " + m + " mal</strong> (las «a medias» cuentan la mitad)</p>" +
+        '<div class="acciones">' +
+        (repasar.length ? '<button class="btn primario" type="button" id="repetir">Repetir las ' + repasar.length + " que fallaste</button>" : "") +
+        '<button class="btn" type="button" id="nuevo">Otra tanda</button><a class="btn" href="' + base + '">Volver a la asignatura</a></div></div>';
+      if (repasar.length) {
+        html += '<h2 style="margin-top:12px">Para repasar</h2><div class="repaso">';
+        repasar.forEach(function (x) {
+          html += '<div class="repaso-item"><div class="q">' + VEREDICTOS[x.res].ico + " " + esc(x.q.pregunta) + "</div>" +
+            (x.texto ? '<div class="r"><div class="tuya">Tu respuesta: ' + esc(x.texto) + "</div></div>" : "") +
+            '<div class="exp"><b>Respuesta modelo:</b> ' + esc(x.q.respuesta) + "</div></div>";
+        });
+        html += "</div>";
+      }
+      pintar(html + "</div>");
+      var rp = document.getElementById("repetir");
+      if (rp) rp.addEventListener("click", function () { iniciarCortas(curso, asig, repasar.map(function (x) { return x.q; })); });
       document.getElementById("nuevo").addEventListener("click", function () { router(); });
     }
 

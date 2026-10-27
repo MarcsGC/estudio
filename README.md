@@ -7,6 +7,7 @@ Web para estudiar organizada por **curso → asignatura → tema**.
   - 60 preguntas de los controles del campus (Teoría XML, Usabilidad, Adaptabilidad y Accesibilidad).
   - 306 preguntas creadas por Claude a partir de los apuntes.
   - Todas las preguntas tienen una explicación que aparece al responder.
+  - 75 preguntas cortas (de respuesta escrita) repartidas por los 15 temas, con respuesta modelo y conceptos clave.
 
 **Funciones**
 - Apuntes en PDF agrupados por tema, con un visor propio:
@@ -17,6 +18,10 @@ Web para estudiar organizada por **curso → asignatura → tema**.
 - «Tests por tema»: cada tema tiene su acceso a cada tipo de test.
 - Corrección al momento con explicación, nota sobre 10 y repaso de fallos.
 - «Solo preguntas que he fallado» y «Repetir los fallos» (se guarda en tu navegador).
+- **Preguntas cortas**: escribes la respuesta con tus palabras y se corrige de dos formas:
+  - automáticamente, buscando los conceptos clave en tu respuesta y enseñándote la respuesta modelo;
+  - opcionalmente con IA (Google Gemini, gratis), que te pone nota y te explica qué falta o qué está mal.
+  - Al final valoras cada respuesta (bien, a medias, mal) y luego puedes repetir solo las que fallaste.
 - Modo claro y oscuro, funciona en el móvil y no necesita instalar nada.
 
 ---
@@ -50,6 +55,19 @@ Abre `index.html` con doble clic. Los tests funcionan. Los PDFs se abren con el 
 
 ---
 
+## 🤖 Activar la corrección con IA (gratis)
+
+1. Entra en <https://aistudio.google.com/apikey> con tu cuenta de Google.
+2. Pulsa **Create API key** y copia la clave (empieza por `AIza…`).
+3. En la web, ve a una asignatura → **Preguntas cortas** → panel **Corrección con IA**.
+4. Pega la clave y pulsa **Guardar y comprobar**. La web elige sola el modelo gratuito recomendado.
+
+- **Dónde se guarda la clave:** solo en tu navegador, nunca en GitHub. En cada dispositivo (ordenador, móvil…) tendrás que pegarla una vez.
+- **Límites:** la capa gratuita tiene un límite de correcciones al día que depende del modelo; los «flash-lite» permiten más. Si llegas al límite, la web te avisa y sigue corrigiendo con los conceptos clave.
+- **Privacidad:** con la capa gratuita, Google puede usar lo que envías para mejorar sus productos, así que no escribas datos personales en las respuestas.
+
+---
+
 ## ✏️ Añadir contenido
 
 ### Preguntas de exámenes de otros años
@@ -61,6 +79,21 @@ Abre `data/preguntas/3/sew.js` y añade líneas en el bloque «EXÁMENES DE OTRO
 
 - `correcta` es la posición de la respuesta buena, empezando en 0 (0 = A, 1 = B…).
 - `tema` tiene que coincidir con uno de los temas de `data/cursos.js`.
+
+### Preguntas cortas
+Están en `data/cortas/3/sew.js`. Cada una tiene el tema, la pregunta, la respuesta modelo y los conceptos clave:
+
+```js
+{ tema: "T8 · XML: DTD", pregunta: "¿Qué es un DTD?",
+  respuesta: "Un conjunto de reglas que define qué elementos y atributos puede tener un documento XML…",
+  claves: [
+    { t: "Reglas / gramática del documento", b: ["regla", "gramatica"] },
+    { t: "Define elementos y atributos", b: ["element&atribut"] }
+  ] },
+```
+
+- En `b` van trozos de palabras que se buscan en tu respuesta, sin tildes ni mayúsculas. Basta con que aparezca uno.
+- Con `"a&b"` tienen que aparecer los dos.
 
 ### Una asignatura nueva
 1. En `data/cursos.js`, copia el bloque de plantilla que hay al final de `asignaturas`.
@@ -80,6 +113,7 @@ css/styles.css             estilos
 js/app.js                  lógica (no hace falta tocarlo)
 js/vendor/pdfjs/           visor de PDF (PDF.js de Mozilla)
 data/cursos.js             cursos, asignaturas, temas y PDFs
-data/preguntas/3/sew.js    preguntas de SEW
+data/preguntas/3/sew.js    preguntas tipo test de SEW
+data/cortas/3/sew.js       preguntas cortas de SEW
 pdfs/3/sew/                apuntes de SEW
 ```
