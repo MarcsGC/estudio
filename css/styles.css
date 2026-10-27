@@ -377,8 +377,9 @@ kbd { font-family: var(--sans); background: var(--superficie-2); border: 1px sol
 /* Navegación entre preguntas */
 .nav-preguntas {
   display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 10px; margin: -4px 0 14px;
-  scrollbar-width: thin; scroll-behavior: smooth;
+  scrollbar-width: thin; position: relative;
 }
+.nav-preguntas.envolver { flex-wrap: wrap; overflow: visible; padding-bottom: 2px; }
 .nav-q {
   flex: none; min-width: 32px; height: 32px; padding: 0 6px; border-radius: 8px; cursor: pointer;
   border: 1.5px solid var(--borde); background: var(--superficie); color: var(--texto-suave);

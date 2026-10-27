@@ -5,7 +5,8 @@ Web para estudiar organizada por **curso → asignatura → tema**.
 **3º curso**
 - **Software y Estándares para la Web (SEW)**: 16 PDFs de teoría y seminarios, y 356 preguntas en 15 temas.
   - 50 preguntas de los controles del campus (Teoría XML, Usabilidad y Adaptabilidad), con las respuestas oficiales.
-  - 306 preguntas creadas por Claude a partir de los apuntes, con explicación.
+  - 306 preguntas creadas por Claude a partir de los apuntes.
+  - Todas las preguntas tienen una explicación que aparece al responder.
 
 **Funciones**
 - Apuntes en PDF agrupados por tema, con un visor propio:

@@ -763,7 +763,7 @@
       var orden = q.opciones.map(function (_, i) { return i; });
       return { q: q, orden: mezclar && !q.fijo ? barajar(orden) : orden, elegida: null };
     });
-    var pos = 0, aciertos = 0, errores = 0;
+    var pos = 0, aciertos = 0, errores = 0, navScroll = 0;
 
     function respondidas() { return aciertos + errores; }
     // Primera pregunta sin responder: hasta ahí se puede navegar
@@ -791,7 +791,7 @@
         '<div class="quiz-top"><span>Pregunta ' + (pos + 1) + " de " + items.length + "</span>" +
         '<span class="marcador">' + marcadorHtml() + "</span></div>" +
         '<div class="progreso"><div style="width:' + (respondidas() / items.length * 100) + '%"></div></div>' +
-        '<div class="nav-preguntas" id="nav-q">' + navHtml() + "</div>" +
+        '<div class="nav-preguntas' + (items.length <= 40 ? " envolver" : "") + '" id="nav-q">' + navHtml() + "</div>" +
         '<div class="pregunta-meta"><span class="chip">' + esc(ORIGENES[q.origen].nombre) + '</span><span class="chip">' + esc(q.tema) + "</span>" +
         (q.fuente ? '<span class="chip">' + esc(q.fuente) + "</span>" : "") + "</div>" +
         '<div class="enunciado">' + esc(q.pregunta) + "</div>" +
@@ -824,11 +824,18 @@
         items = items.filter(function (x) { return x.elegida !== null; });
         mostrarResultado();
       });
-      var actualBtn = app.querySelector(".nav-q.actual");
-      if (actualBtn) {
-        var nav = document.getElementById("nav-q");
-        nav.scrollLeft = actualBtn.offsetLeft - nav.clientWidth / 2 + actualBtn.offsetWidth / 2;
+      // La fila de números se queda donde estaba; solo se mueve lo justo si la pregunta actual queda fuera
+      var nav = document.getElementById("nav-q");
+      nav.scrollLeft = navScroll;
+      var actualBtn = nav.querySelector(".nav-q.actual");
+      if (actualBtn && !nav.classList.contains("envolver")) {
+        var izq = actualBtn.offsetLeft, der = izq + actualBtn.offsetWidth;
+        // Si se sale por la derecha, se «pasa página» dejándola al principio; si se sale por la izquierda, al final
+        if (der > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = izq - 4;
+        else if (izq < nav.scrollLeft) nav.scrollLeft = der - nav.clientWidth + 4;
       }
+      navScroll = nav.scrollLeft;
+      nav.addEventListener("scroll", function () { navScroll = nav.scrollLeft; }, { passive: true });
       if (it.elegida !== null) mostrarCorreccion(false);
     }
 
