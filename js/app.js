@@ -668,13 +668,24 @@
       var opcionesNum = [10, 20, 30].filter(function (n) { return n < lista.length; });
       var cfg = store.get("cfg", { num: 10, mezclar: true });
 
-      html += '<div class="panel"><div class="form-rejilla">';
-      html += '<div class="campo"><label for="f-tema">Tema</label><select id="f-tema"><option value="">Todos los temas</option>' +
-        temas.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + "</option>"; }).join("") + "</select></div>";
-      html += '<div class="campo"><label>Número de preguntas</label><div class="segmentado" id="f-num">' +
+      var claveTemas = "temasExcluidos:" + curso.id + "/" + asig.id;
+      var excluidos = store.get(claveTemas, []);
+      var porTema = {};
+      temas.forEach(function (t) { porTema[t] = lista.filter(function (q) { return q.tema === t; }); });
+
+      html += '<div class="panel">';
+      html += '<div class="campo"><div class="campo-cab"><label>Temas que entran</label>' +
+        '<span class="mini-acciones"><button type="button" id="t-todos">Todos</button><button type="button" id="t-ninguno">Ninguno</button></span></div>' +
+        '<div class="temas-check" id="f-temas">' +
+        temas.map(function (t, k) {
+          var marcado = temaInicial ? t === temaInicial : excluidos.indexOf(t) < 0;
+          return '<label class="tcheck"><input type="checkbox" value="' + k + '"' + (marcado ? " checked" : "") + ">" +
+            '<span class="tnom">' + esc(t) + '</span><span class="tnum" data-k="' + k + '">' + porTema[t].length + "</span></label>";
+        }).join("") +
+        "</div></div>";
+      html += '<div class="campo" style="margin-top:22px"><label>Número de preguntas</label><div class="segmentado" id="f-num">' +
         opcionesNum.map(function (n) { return '<button type="button" data-n="' + n + '">' + n + "</button>"; }).join("") +
         '<button type="button" data-n="0">Todas</button></div></div>';
-      html += "</div>";
       html += '<div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">' +
         '<label class="check"><input type="checkbox" id="f-mezclar"' + (cfg.mezclar ? " checked" : "") + "> Mezclar el orden de preguntas y respuestas <span class=\"meta\">(las del tipo «a, b y c son correctas» no se mueven)</span></label>" +
         '<label class="check"><input type="checkbox" id="f-fallos"> Solo preguntas que he fallado <span class="meta" id="n-fallos"></span></label>' +
@@ -684,43 +695,58 @@
         '<p id="disponibles" style="margin-top:12px;font-size:.88rem;color:var(--texto-suave)"></p></div>';
       pintar(html);
 
-      var selTema = document.getElementById("f-tema");
-      if (temaInicial && temas.indexOf(temaInicial) >= 0) selTema.value = temaInicial;
+      var checksTema = Array.prototype.slice.call(document.querySelectorAll("#f-temas input"));
       var chkFallos = document.getElementById("f-fallos");
       var chkMezclar = document.getElementById("f-mezclar");
       var botonesNum = Array.prototype.slice.call(document.querySelectorAll("#f-num button"));
       var num = cfg.num;
       if (!botonesNum.some(function (b) { return +b.dataset.n === num; })) num = 0;
 
+      function temasMarcados() {
+        return checksTema.filter(function (c) { return c.checked; }).map(function (c) { return temas[+c.value]; });
+      }
+      function esFallo(q) { return fallos.indexOf(q.id) >= 0; }
       function seleccion() {
-        var t = selTema.value;
+        var ts = temasMarcados();
         return lista.filter(function (q) {
-          return (!t || q.tema === t) && (!chkFallos.checked || fallos.indexOf(q.id) >= 0);
+          return ts.indexOf(q.tema) >= 0 && (!chkFallos.checked || esFallo(q));
         });
       }
       function actualizar() {
         botonesNum.forEach(function (b) { b.setAttribute("aria-pressed", String(+b.dataset.n === num)); });
-        var nFallosTema = lista.filter(function (q) {
-          return fallos.indexOf(q.id) >= 0 && (!selTema.value || q.tema === selTema.value);
-        }).length;
-        document.getElementById("n-fallos").textContent = "(" + nFallosTema + ")";
-        chkFallos.disabled = nFallosTema === 0;
-        if (nFallosTema === 0) chkFallos.checked = false;
+        var ts = temasMarcados();
+        var nFallosSel = lista.filter(function (q) { return esFallo(q) && ts.indexOf(q.tema) >= 0; }).length;
+        document.getElementById("n-fallos").textContent = "(" + nFallosSel + ")";
+        chkFallos.disabled = nFallosSel === 0;
+        if (nFallosSel === 0) chkFallos.checked = false;
+        temas.forEach(function (t, k) {
+          var n = chkFallos.checked ? porTema[t].filter(esFallo).length : porTema[t].length;
+          document.querySelector('.tnum[data-k="' + k + '"]').textContent = n;
+        });
+        checksTema.forEach(function (c) { c.parentNode.classList.toggle("off", !c.checked); });
         var disp = seleccion().length;
         var haras = num ? Math.min(num, disp) : disp;
-        document.getElementById("disponibles").textContent = plural(disp, "pregunta disponible", "preguntas disponibles") +
-          " · harás " + haras;
+        document.getElementById("disponibles").textContent = !ts.length
+          ? "Marca al menos un tema"
+          : plural(ts.length, "tema", "temas") + " · " + plural(disp, "pregunta disponible", "preguntas disponibles") + " · harás " + haras;
         document.getElementById("empezar").disabled = disp === 0;
       }
       botonesNum.forEach(function (b) {
         b.addEventListener("click", function () { num = +b.dataset.n; actualizar(); });
       });
-      selTema.addEventListener("change", actualizar);
+      checksTema.forEach(function (c) { c.addEventListener("change", actualizar); });
+      document.getElementById("t-todos").addEventListener("click", function () { checksTema.forEach(function (c) { c.checked = true; }); actualizar(); });
+      document.getElementById("t-ninguno").addEventListener("click", function () { checksTema.forEach(function (c) { c.checked = false; }); actualizar(); });
       chkFallos.addEventListener("change", actualizar);
       actualizar();
 
       document.getElementById("empezar").addEventListener("click", function () {
         store.set("cfg", { num: num, mezclar: chkMezclar.checked });
+        // Recordar los temas excluidos (salvo si se entró desde el atajo de un solo tema)
+        if (!temaInicial) {
+          var ts = temasMarcados();
+          store.set(claveTemas, temas.filter(function (t) { return ts.indexOf(t) < 0; }));
+        }
         var sel = seleccion();
         if (chkMezclar.checked) sel = barajar(sel);
         if (num) sel = sel.slice(0, num);
@@ -739,12 +765,33 @@
     });
     var pos = 0, aciertos = 0, errores = 0;
 
+    function respondidas() { return aciertos + errores; }
+    // Primera pregunta sin responder: hasta ahí se puede navegar
+    function frontera() {
+      for (var k = 0; k < items.length; k++) if (items[k].elegida === null) return k;
+      return items.length;
+    }
+    function marcadorHtml() {
+      return '<span class="ok">✓ ' + aciertos + '</span><span class="mal">✗ ' + errores + "</span>";
+    }
+    function navHtml() {
+      var f = frontera();
+      return items.map(function (x, k) {
+        var cls = x.elegida === null ? "" : (x.elegida === x.q.correcta ? " ok" : " mal");
+        if (k === pos) cls += " actual";
+        var bloqueada = k > f;
+        return '<button type="button" class="nav-q' + cls + '" data-k="' + k + '"' + (bloqueada ? " disabled" : "") +
+          ' aria-label="Pregunta ' + (k + 1) + '">' + (k + 1) + "</button>";
+      }).join("");
+    }
+
     function pintarPregunta() {
       var it = items[pos], q = it.q;
       var html = '<div class="quiz">' +
         '<div class="quiz-top"><span>Pregunta ' + (pos + 1) + " de " + items.length + "</span>" +
-        '<span class="marcador"><span class="ok">✓ ' + aciertos + '</span><span class="mal">✗ ' + errores + "</span></span></div>" +
-        '<div class="progreso"><div style="width:' + (pos / items.length * 100) + '%"></div></div>' +
+        '<span class="marcador">' + marcadorHtml() + "</span></div>" +
+        '<div class="progreso"><div style="width:' + (respondidas() / items.length * 100) + '%"></div></div>' +
+        '<div class="nav-preguntas" id="nav-q">' + navHtml() + "</div>" +
         '<div class="pregunta-meta"><span class="chip">' + esc(ORIGENES[q.origen].nombre) + '</span><span class="chip">' + esc(q.tema) + "</span>" +
         (q.fuente ? '<span class="chip">' + esc(q.fuente) + "</span>" : "") + "</div>" +
         '<div class="enunciado">' + esc(q.pregunta) + "</div>" +
@@ -754,22 +801,58 @@
             '</span><span class="txt">' + esc(q.opciones[orig]) + "</span></button>";
         }).join("") +
         '</div><div id="feedback"></div>' +
-        '<div class="acciones" style="justify-content:space-between">' +
+        '<div class="acciones quiz-acciones">' +
         '<button class="btn" type="button" id="salir">Terminar aquí</button>' +
-        '<button class="btn primario" type="button" id="siguiente" hidden>' + (pos + 1 < items.length ? "Siguiente →" : "Ver resultado") + "</button></div>" +
+        '<span class="quiz-nav">' +
+        '<button class="btn" type="button" id="anterior"' + (pos === 0 ? " disabled" : "") + ">← Anterior</button>" +
+        '<button class="btn primario" type="button" id="siguiente" hidden></button></span></div>' +
         '<p class="atajos">Atajos: <kbd>1</kbd>–<kbd>' + it.orden.length + "</kbd> o <kbd>A</kbd>–<kbd>" + LETRAS[it.orden.length - 1] +
-        "</kbd> para responder · <kbd>Enter</kbd> para seguir</p></div>";
+        "</kbd> para responder · <kbd>←</kbd> <kbd>→</kbd> para moverte · <kbd>Enter</kbd> para seguir</p></div>";
       pintar(html);
 
       Array.prototype.forEach.call(app.querySelectorAll(".opcion"), function (b) {
         b.addEventListener("click", function () { responder(+b.dataset.i); });
       });
+      document.getElementById("nav-q").addEventListener("click", function (e) {
+        var b = e.target.closest(".nav-q");
+        if (b && !b.disabled) irA(+b.dataset.k);
+      });
+      document.getElementById("anterior").addEventListener("click", function () { irA(pos - 1); });
       document.getElementById("siguiente").addEventListener("click", siguiente);
       document.getElementById("salir").addEventListener("click", function () {
-        if (aciertos + errores === 0) { location.hash = base + "/test/" + origen; router(); return; }
+        if (respondidas() === 0) { location.hash = base + "/test/" + origen; router(); return; }
         items = items.filter(function (x) { return x.elegida !== null; });
         mostrarResultado();
       });
+      var actualBtn = app.querySelector(".nav-q.actual");
+      if (actualBtn) {
+        var nav = document.getElementById("nav-q");
+        nav.scrollLeft = actualBtn.offsetLeft - nav.clientWidth / 2 + actualBtn.offsetWidth / 2;
+      }
+      if (it.elegida !== null) mostrarCorreccion(false);
+    }
+
+    function mostrarCorreccion(recien) {
+      var it = items[pos];
+      var ok = it.elegida === it.q.correcta;
+      Array.prototype.forEach.call(app.querySelectorAll(".opcion"), function (b) {
+        var orig = it.orden[+b.dataset.i];
+        b.disabled = true;
+        if (orig === it.q.correcta) b.classList.add("correcta");
+        else if (orig === it.elegida) b.classList.add("incorrecta");
+      });
+      var letraBuena = LETRAS[it.orden.indexOf(it.q.correcta)];
+      document.getElementById("feedback").innerHTML = '<div class="explicacion ' + (ok ? "ok" : "mal") + '">' +
+        '<div class="veredicto ' + (ok ? "ok" : "mal") + '">' + (ok ? "¡Correcto!" : "Incorrecto · la buena era la " + letraBuena) + "</div>" +
+        (it.q.explicacion ? "<div>" + esc(it.q.explicacion) + "</div>" : "") + "</div>";
+      var sig = document.getElementById("siguiente");
+      var f = frontera();
+      sig.textContent = pos + 1 < items.length ? "Siguiente →" : (f === items.length ? "Ver resultado" : "Ir a la pendiente →");
+      sig.hidden = false;
+      if (recien) {
+        sig.focus({ preventScroll: true });
+        document.getElementById("feedback").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
     }
 
     function responder(i) {
@@ -785,28 +868,26 @@
       if (!ok && idx < 0) fallos.push(it.q.id);
       store.set(claveFallos, fallos);
 
-      Array.prototype.forEach.call(app.querySelectorAll(".opcion"), function (b) {
-        var orig = it.orden[+b.dataset.i];
-        b.disabled = true;
-        if (orig === it.q.correcta) b.classList.add("correcta");
-        else if (orig === it.elegida) b.classList.add("incorrecta");
-      });
-      var letraBuena = LETRAS[it.orden.indexOf(it.q.correcta)];
-      document.getElementById("feedback").innerHTML = '<div class="explicacion ' + (ok ? "ok" : "mal") + '">' +
-        '<div class="veredicto ' + (ok ? "ok" : "mal") + '">' + (ok ? "¡Correcto!" : "Incorrecto · la buena era la " + letraBuena) + "</div>" +
-        (it.q.explicacion ? "<div>" + esc(it.q.explicacion) + "</div>" : "") + "</div>";
-      app.querySelector(".quiz-top .marcador").innerHTML = '<span class="ok">✓ ' + aciertos + '</span><span class="mal">✗ ' + errores + "</span>";
-      app.querySelector(".progreso div").style.width = ((pos + 1) / items.length * 100) + "%";
-      var sig = document.getElementById("siguiente");
-      sig.hidden = false;
-      sig.focus({ preventScroll: true });
-      document.getElementById("feedback").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      app.querySelector(".quiz-top .marcador").innerHTML = marcadorHtml();
+      app.querySelector(".progreso div").style.width = (respondidas() / items.length * 100) + "%";
+      var nav = document.getElementById("nav-q"), sl = nav.scrollLeft;
+      nav.innerHTML = navHtml();
+      nav.scrollLeft = sl;
+      mostrarCorreccion(true);
+    }
+
+    function irA(k) {
+      if (k < 0 || k >= items.length || k > frontera() || k === pos) return;
+      pos = k;
+      pintarPregunta();
     }
 
     function siguiente() {
       if (items[pos].elegida === null) return;
-      pos++;
-      if (pos < items.length) pintarPregunta(); else mostrarResultado();
+      var f = frontera();
+      if (f === items.length && pos === items.length - 1) return mostrarResultado();
+      if (pos + 1 < items.length) irA(pos + 1);
+      else irA(f);
     }
 
     function teclado(e) {
@@ -815,7 +896,9 @@
       var k = e.key;
       if (/^[1-8]$/.test(k)) { responder(+k - 1); e.preventDefault(); }
       else if (/^[a-hA-H]$/.test(k)) { responder(LETRAS.indexOf(k.toUpperCase())); e.preventDefault(); }
-      else if (k === "Enter" && items[pos].elegida !== null && document.activeElement.id !== "siguiente") { siguiente(); e.preventDefault(); }
+      else if (k === "ArrowLeft") { irA(pos - 1); e.preventDefault(); }
+      else if (k === "ArrowRight") { if (items[pos].elegida !== null) siguiente(); e.preventDefault(); }
+      else if (k === "Enter" && items[pos].elegida !== null && document.activeElement.tagName !== "BUTTON") { siguiente(); e.preventDefault(); }
     }
     document.addEventListener("keydown", teclado);
     limpiarTeclado = function () { document.removeEventListener("keydown", teclado); };
